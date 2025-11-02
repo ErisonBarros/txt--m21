@@ -85,6 +85,11 @@ class M21Converter:
     # Padrões comuns que indicam início de uma nova medição
     # Estes padrões podem ser ajustados conforme necessário
     MEASUREMENT_PATTERNS = [
+        r'\+P\d+_\s+\?',         # Padrão: +P01_ ? (ponto + número + underscore + espaço + ?)
+        r'\+PT\d+_\s+\?',        # Padrão: +PT180_ ? (ponto PT + número)
+        r'\+EST\d+_\s+\?',       # Padrão: +EST1_ ? (estação + número)
+        r"'[A-Z0-9]+_\(",         # Padrão: 'EPS7_(EST_) (início de estação)
+        r'\+EPS\d+_\s+\?',       # Padrão: +EPS4_ ? (EPS + número)
         r'^\d{2}[A-Z]{2}\d{4}',  # Padrão: 02GZ0001 (número + letras + número)
         r'^[A-Z]{2}\d{4,6}',      # Padrão: GZ000001 (letras + números)
         r'^\d{4,6}[A-Z]',         # Padrão: 0001A (números + letra)
@@ -95,11 +100,12 @@ class M21Converter:
     
     # Caracteres comuns que devem ser removidos do início/fim das linhas
     UNWANTED_CHARS_START = [
-        r'^\s*[^\d\w]+',  # Remove caracteres especiais no início
+        r'^\s*[^\d\w\'\+]+',  # Remove caracteres especiais no início (preserva ' e +)
         r'^[*#@$%&]+',    # Remove símbolos específicos
     ]
     
     UNWANTED_CHARS_END = [
+        r'1234$',         # Remove o sufixo '1234' que aparece em muitas linhas
         r'[^\d\w]+\s*$',  # Remove caracteres especiais no final
         r'[*#@$%&]+$',    # Remove símbolos específicos
     ]
@@ -187,6 +193,25 @@ class M21Converter:
         """
         original_length = len(line)
         
+        # Remove caracteres de controle ASCII (STX, ETX, SOH, etc.)
+        # O arquivo contém ^B (STX=0x02) no início e ^C (ETX=0x03) no final
+        line = re.sub(r'[\x00-\x1F\x7F]', '', line)
+        
+        # Remove o padrão '1234' de qualquer posição (artefato de exportação)
+        # Este padrão aparece no meio de números, dividindo-os
+        # Exemplo: "m1234 0890518" deve se tornar "m0890518"
+        # Exemplo: "+00011234 6117m" deve se tornar "+00016117m"
+        line = re.sub(r'1234\s*', '', line)
+        
+        # Remove espaços que ficaram no meio de números/letras após remover '1234'
+        # Exemplo: "m 0890518" -> "m0890518"
+        # Exemplo: "+0001 6117m" -> "+00016117m"
+        # Exemplo: "t00+ 00+00000" -> "t00+00+00000"
+        # Aplica múltiplas vezes para garantir que todos os espaços sejam removidos
+        # Remove espaços entre dígitos e letras
+        while re.search(r'([a-zA-Z0-9+\-])\s+([a-zA-Z0-9+\-])', line):
+            line = re.sub(r'([a-zA-Z0-9+\-])\s+([a-zA-Z0-9+\-])', r'\1\2', line)
+        
         # Remove caracteres do início
         for pattern in self.UNWANTED_CHARS_START:
             line = re.sub(pattern, '', line)
@@ -195,7 +220,10 @@ class M21Converter:
         for pattern in self.UNWANTED_CHARS_END:
             line = re.sub(pattern, '', line)
         
-        # Remove espaços extras
+        # Remove espaços múltiplos
+        line = re.sub(r'\s+', ' ', line)
+        
+        # Remove espaços extras no início e fim
         line = line.strip()
         
         chars_removed = original_length - len(line)
